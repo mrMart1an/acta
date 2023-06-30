@@ -1,172 +1,171 @@
-pub mod handlers;
-pub mod formatters;
 pub mod filters;
+pub mod formatters;
+pub mod handlers;
 pub mod macros;
 
-use colored::Color;
+use chrono::{DateTime, Local};
+use core::fmt::{Arguments, Display};
 use handlers::LogHandler;
-use core::fmt;
+use log::*;
 use std::sync::RwLock;
 
-use chrono::prelude::*;
-use lazy_static::lazy_static;
-use std::fmt::Display;
+/*
+*
+*   Logger definition and implementations
+*
+*/
 
-// Lazy initialization of the LOGGER static variable
-// with an empty handlers vector
-lazy_static! {
-    static ref LOGGER: Logger = Logger {
-        handlers: RwLock::new(vec![])
-    };
-}
-
-// Compile time log level const
-pub const COMPILE_LOG_LEVEL: Option<LogLevel> = compile_log_level();
-   
 pub struct Logger {
     handlers: RwLock<Vec<Box<dyn LogHandler>>>,
 }
 
-/// Define a struct to represent a log entry
-pub struct Log<'a> {
-    /// The time of creation of the log
-    pub time: DateTime<Local>,
-
-    /// The log level assigned to the log
-    pub level: LogLevel,
-    /// The formatted logging message
-    pub message: fmt::Arguments<'a>,
-    /// The source of the logging message
-    pub source: &'a str,
-}
-
-// Implement public methods of the Logger struct 
+// Implement initialization methods of the Logger struct
 impl Logger {
-    /// Private api function: use the log_add_handlers macro instead
+    /// Private api function: use the log_init macro instead
     ///
-    /// Add a log handler to the global logger
-    /// Each log will be processed by all the handlers 
-    pub fn __private_add_handler(handler: Box<dyn LogHandler>) {
-        LOGGER.handlers.write().unwrap().push(handler);
-    }
-
-    /// Private api function: use the log macro instead
-    ///
-    /// Generate a new log and process it
-    pub fn __private_log(level: LogLevel, source: &str, fmt_args: fmt::Arguments) {
-        let log = Log {
-            message: fmt_args,
-            source,
-
-            level,
-            time: Local::now(),
+    /// Initialized the logger with the given handlers
+    pub fn __private_init(handlers: Vec<Box<dyn LogHandler>>) -> Result<(), SetLoggerError> {
+        static LOGGER: Logger = Logger {
+            handlers: RwLock::new(vec![]),
         };
 
-        // Run the log through all the handler
-        for handler in LOGGER.handlers.read().unwrap().iter() {
-            if handler.filter(&log) {
-                handler.log(&log);
-            }
+        *LOGGER
+            .handlers
+            .write()
+            .expect("couldn't get write lock on handlers") = handlers;
+
+        // Initialize logger with static max log level trace
+        // The log filtering is done by the handlers
+        log::set_logger(&LOGGER)
+            .map(|()| log::set_max_level(LevelFilter::Trace))
+    }
+}
+
+// Implement the log crate Logger trait for Logger
+impl log::Log for Logger {
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        let timed_record = TimedRecord::new(record);
+
+        self.handlers
+            .read()
+            .expect("acta: Failed to obtain read lock for handlers")
+            .iter()
+            .for_each(|handler| {
+                if handler.filter(record.metadata()) {
+                    handler.log(&timed_record);
+                };
+            });
+    }
+
+    fn flush(&self) {}
+}
+
+/*
+*
+*   TimedRecord definition and implementations
+*
+*/
+
+/// Store a log record and the time of its creation
+/// Implement args, level, target, time and metadata
+pub struct TimedRecord<'a> {
+    time: DateTime<Local>,
+    record: &'a Record<'a>,
+}
+
+// Implement methods and constructor for TimedRecord
+impl<'a> TimedRecord<'a> {
+    /// Generate a new TimedRecord initialized with the current time
+    pub fn new(record: &'a Record) -> Self {
+        Self {
+            time: Local::now(),
+            record,
+        }
+    }
+
+    /// Get a reference to the log initialization time
+    pub fn time(&self) -> &DateTime<Local> {
+        &self.time
+    }
+
+    /// Get a reference to the log message args
+    pub fn args(&self) -> &Arguments {
+        self.record.args()
+    }
+
+    /// Get the log level
+    pub fn level(&self) -> Level {
+        self.record.level()
+    }
+
+    /// Get a reference to the log target
+    pub fn target(&self) -> &str {
+        self.record.target()
+    }
+
+    /// Get a reference to the log metadata
+    pub fn metadata(&self) -> &Metadata {
+        self.record.metadata()
+    }
+}
+
+/*
+*
+*   Formatter definition and implementations
+*
+*/
+
+// Store the formatter function and generate FormattedRecord
+pub struct RecordFormatter<F>
+where
+    F: Fn(&mut std::fmt::Formatter<'_>, &TimedRecord) -> std::fmt::Result + Send + Sync,
+{
+    formatter_function: F,
+}
+
+// implement constructor and methods for RecordFormatter
+impl<F> RecordFormatter<F>
+where
+    F: Fn(&mut std::fmt::Formatter<'_>, &TimedRecord) -> std::fmt::Result + Send + Sync,
+{
+    fn new(formatter_function: F) -> Self {
+        RecordFormatter { formatter_function }
+    }
+
+    fn format<'a>(&'a self, record: &'a TimedRecord) -> FormattedRecord<'a, &F> {
+        FormattedRecord {
+            formatter_function: &self.formatter_function,
+            record,
         }
     }
 }
 
-/// Emum to represent the log level 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warning,
-    Error,
-    Fatal,
+/*
+*
+*   Formatted Record definition and implementations
+*
+*/
+
+// Store a reference to a record and a formatter function
+struct FormattedRecord<'a, F>
+where
+    F: Fn(&mut std::fmt::Formatter<'_>, &TimedRecord) -> std::fmt::Result + Send + Sync,
+{
+    formatter_function: F,
+    record: &'a TimedRecord<'a>,
 }
 
-// Implement the Display trait for the log level Enum 
-impl Display for LogLevel {
+// Implement the Display trait for the formatted record
+impl<'a, F> Display for FormattedRecord<'a, F>
+where
+    F: Fn(&mut std::fmt::Formatter<'_>, &TimedRecord) -> std::fmt::Result + Send + Sync,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LogLevel::Trace => write!(f, "Trace"),
-            LogLevel::Debug => write!(f, "Debug"),
-            LogLevel::Info => write!(f, "Info "),
-            LogLevel::Warning => write!(f, "Warn "),
-            LogLevel::Error => write!(f, "Error"),
-            LogLevel::Fatal => write!(f, "Fatal"),
-        }
+        // Use the stored formatter function to format the record
+        (self.formatter_function)(f, self.record)
     }
-}
-
-// Implement public methods of the log level Enum
-impl LogLevel {
-    /// Return the colored library color for the corresponding log level
-    pub fn get_color(&self) -> Color {
-        match self {
-            LogLevel::Trace => Color::BrightGreen,
-            LogLevel::Debug => Color::Green,
-            LogLevel::Info => Color::Blue,
-            LogLevel::Warning => Color::Yellow,
-            LogLevel::Error => Color::BrightRed,
-            LogLevel::Fatal => Color::Red,
-        }
-    }
-}
- 
-// Obtain the compile time log level for debug builds
-#[allow(unreachable_code)]
-#[cfg(debug_assertions)]
-const fn compile_log_level() -> Option<LogLevel> {
-    #[cfg(feature = "debug_log_lvl_trace")]
-    return Some(LogLevel::Trace);
-
-    #[cfg(feature = "debug_log_lvl_debug")]
-    return Some(LogLevel::Debug);
-
-    #[cfg(feature = "debug_log_lvl_info")]
-    return Some(LogLevel::Info);
-
-    #[cfg(feature = "debug_log_lvl_warn")]
-    return Some(LogLevel::Warning);
-
-    #[cfg(feature = "debug_log_lvl_error")]
-    return Some(LogLevel::Error);
-
-    #[cfg(feature = "debug_log_lvl_fatal")]
-    return Some(LogLevel::Fatal);
-
-    #[cfg(feature = "debug_log_lvl_off")]
-    return None;
-
-    // If no feature is specified default to None to disable 
-    // logging completely 
-    None
-}
-
-// Obtain the compile time log level for release builds
-#[allow(unreachable_code)]
-#[cfg(not(debug_assertions))]
-const fn compile_log_level() -> Option<LogLevel> {
-    #[cfg(feature = "release_log_lvl_trace")]
-    return Some(LogLevel::Trace);
-
-    #[cfg(feature = "release_log_lvl_debug")]
-    return Some(LogLevel::Debug);
-
-    #[cfg(feature = "release_log_lvl_info")]
-    return Some(LogLevel::Info);
-
-    #[cfg(feature = "release_log_lvl_warn")]
-    return Some(LogLevel::Warning);
-
-    #[cfg(feature = "release_log_lvl_error")]
-    return Some(LogLevel::Error);
-
-    #[cfg(feature = "release_log_lvl_fatal")]
-    return Some(LogLevel::Fatal);
-    
-    #[cfg(feature = "release_log_lvl_off")]
-    return None;
-
-    // If no feature is specified default to None to disable 
-    // logging completely 
-    None
 }

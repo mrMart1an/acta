@@ -1,3 +1,3 @@
 # Acta
 
-Reinventing a rust logging library
+Rust log implementation inspired by log4j architecture

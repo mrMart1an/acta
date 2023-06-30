@@ -5,24 +5,4 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4.26"
-colored = "2.0.0"
-lazy_static = "1.4.0"
-
-[features]
-default = ["debug_log_lvl_trace", "release_log_lvl_info"]
-
-debug_log_lvl_trace = []
-debug_log_lvl_debug = []
-debug_log_lvl_info = []
-debug_log_lvl_warn = []
-debug_log_lvl_error = []
-debug_log_lvl_fatal = []
-debug_log_lvl_off = []
-
-release_log_lvl_trace = []
-release_log_lvl_debug = []
-release_log_lvl_info = []
-release_log_lvl_warn = []
-release_log_lvl_error = []
-release_log_lvl_fatal = []
-release_log_lvl_off = []
+log = "0.4.19"

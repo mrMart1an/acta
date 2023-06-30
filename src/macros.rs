@@ -1,70 +1,33 @@
-/// Add log handlers to the global logger
+/// Initialize the logger whit the given handlers
+///
+/// Initialization can only happen once !
 #[macro_export]
-macro_rules! log_add_handlers {
-    ($($handler:expr),*) => {
+macro_rules! init_logger {
+    ($($handler:expr),*) => ({
+        let mut handlers: Vec<Box<dyn $crate::handlers::LogHandler>> = vec![];
+
+        // Fill the handlers vector
         $(
-            $crate::Logger::__private_add_handler(Box::new($handler));
+            handlers.push(Box::new($handler));
         )*
-    };
+
+        $crate::Logger::__private_init(handlers)
+    })
 }
 
+/// Chain multiple filter function together
 #[macro_export]
-macro_rules! log {
-    (source: $source:expr, $level:expr, $($fmt_arg:tt)+) => ({
-        if let Some(LEVEL) = COMPILE_LOG_LEVEL {
-            if $level >= LEVEL {
-                $crate::Logger::__private_log($level, $source, format_args!($($fmt_arg)+))
-            }
+macro_rules! join_filters {
+    ($($filter:expr),*) => {
+        // Create the outer closure
+        |metadata: &log::Metadata| {
+            let mut status = true;
+
+            $(
+                status &= ($filter)(metadata);     
+            )*
+
+            status
         }
-    });
-
-    ($level:expr, $($fmt_arg:tt)+) => ({
-         if let Some(LEVEL) = COMPILE_LOG_LEVEL {
-            if $level >= LEVEL {
-                $crate::Logger::__private_log($level, module_path!(), format_args!($($fmt_arg)+))
-            }
-        }          
-    });
-}
-
-#[macro_export]
-macro_rules! trace {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Trace, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Trace, $($fmt_arg)+));
-}
-
-#[macro_export]
-macro_rules! debug {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Debug, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Debug, $($fmt_arg)+));
-}
-
-#[macro_export]
-macro_rules! info {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Info, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Info, $($fmt_arg)+));
-}
-
-#[macro_export]
-macro_rules! warn {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Warning, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Warning, $($fmt_arg)+));
-}
-
-#[macro_export]
-macro_rules! error {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Error, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Error, $($fmt_arg)+));
-}
-
-#[macro_export]
-macro_rules! fatal {
-    (source: $source:expr, ($fmt_arg:tt)+) => (log!($source, $crate::LogLevel::Fatal, $($fmt_arg)+));
-
-    ($($fmt_arg:tt)+) => (log!($crate::LogLevel::Fatal, $($fmt_arg)+));
+    }
 }
